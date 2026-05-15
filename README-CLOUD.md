@@ -45,7 +45,9 @@ BYBIT_MARKET_BASE_URL
 When `BYBIT_BASE_URL` is demo, public market data defaults to
 `https://api.bybit.com` because GitHub-hosted runners may receive `403
 Forbidden` from the demo public market-data endpoint. Orders still use
-`BYBIT_BASE_URL`.
+`BYBIT_BASE_URL`. If Bybit public market data is also blocked, dry-run signal
+checks fall back to Binance/Binance.US public market data. Execution still uses
+Bybit only.
 
 For demo:
 

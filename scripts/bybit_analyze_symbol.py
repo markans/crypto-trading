@@ -14,6 +14,10 @@ from decimal import Decimal
 
 
 DEFAULT_BASE_URL = "https://api-demo.bybit.com"
+HTTP_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
+}
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -22,7 +26,7 @@ def normalize_symbol(symbol: str) -> str:
 
 def public_get(base_url: str, path: str, params: dict[str, str]) -> dict:
     query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(f"{base_url}{path}?{query}", method="GET")
+    request = urllib.request.Request(f"{base_url}{path}?{query}", headers=HTTP_HEADERS, method="GET")
     with urllib.request.urlopen(request, timeout=15) as response:
         data = json.loads(response.read().decode("utf-8"))
     if data.get("retCode") != 0:

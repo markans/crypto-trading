@@ -19,6 +19,8 @@ import json
 import os
 import re
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -30,6 +32,10 @@ import bybit_demo_open_ethusdt as order
 
 DEFAULT_BASE_URL = "https://api-demo.bybit.com"
 LIVE_BASE_URL = "https://api.bybit.com"
+BINANCE_BASE_URLS = [
+    "https://api.binance.com",
+    "https://api.binance.us",
+]
 ALLOWED_BASE_URLS = {
     "https://api-demo.bybit.com",
     LIVE_BASE_URL,
@@ -65,6 +71,17 @@ def resolve_market_base_url(trade_base_url: str) -> str:
     if "api-demo.bybit.com" in trade_base_url:
         return LIVE_BASE_URL
     return trade_base_url
+
+
+def public_json(base_url: str, path: str, params: dict[str, str]) -> dict | list:
+    query = urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        f"{base_url}{path}?{query}",
+        headers=analyzer.HTTP_HEADERS,
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def ny_time_allowed(target: str, window_minutes: int, now: datetime | None = None) -> tuple[bool, str]:
@@ -116,6 +133,7 @@ def run_signal(base_url: str, symbol: str) -> dict[str, object]:
     confidence = "strong" if abs(total_score) >= 6 else "moderate" if abs(total_score) >= 3 else "low"
 
     return {
+        "market_source": base_url,
         "symbol": symbol,
         "last_price": last_price,
         "24h_change_pct": ticker.get("price24hPcnt"),
@@ -128,7 +146,105 @@ def run_signal(base_url: str, symbol: str) -> dict[str, object]:
     }
 
 
+def binance_interval(bybit_interval: str) -> str:
+    return {
+        "15": "15m",
+        "60": "1h",
+        "240": "4h",
+    }.get(bybit_interval, bybit_interval)
+
+
+def binance_klines(base_url: str, symbol: str, interval: str, limit: int) -> list[list[object]]:
+    data = public_json(
+        base_url,
+        "/api/v3/klines",
+        {"symbol": symbol, "interval": binance_interval(interval), "limit": str(limit)},
+    )
+    if not isinstance(data, list):
+        raise RuntimeError(f"Unexpected Binance kline response: {data}")
+    return data
+
+
+def binance_closed_closes(base_url: str, symbol: str, interval: str, limit: int = 220) -> list[Decimal]:
+    rows = binance_klines(base_url, symbol, interval, limit)
+    return [Decimal(str(row[4])) for row in rows[:-1]]
+
+
+def binance_closed_candles(base_url: str, symbol: str, interval: str, limit: int = 80) -> list[dict[str, Decimal]]:
+    rows = binance_klines(base_url, symbol, interval, limit)
+    return [
+        {
+            "open": Decimal(str(row[1])),
+            "high": Decimal(str(row[2])),
+            "low": Decimal(str(row[3])),
+            "close": Decimal(str(row[4])),
+        }
+        for row in rows[:-1]
+    ]
+
+
+def run_binance_signal(base_url: str, symbol: str) -> dict[str, object]:
+    ticker = public_json(base_url, "/api/v3/ticker/24hr", {"symbol": symbol})
+    if not isinstance(ticker, dict):
+        raise RuntimeError(f"Unexpected Binance ticker response: {ticker}")
+    last_price = Decimal(str(ticker["lastPrice"]))
+
+    results: dict[str, dict[str, Decimal | int]] = {}
+    total_score = 0
+    for interval in ["15", "60", "240"]:
+        closes = binance_closed_closes(base_url, symbol, interval)
+        score, fast, slow, momentum = analyzer.timeframe_score(closes)
+        total_score += score
+        results[interval] = {
+            "score": score,
+            "last_close": closes[-1],
+            "ema21": fast,
+            "ema55": slow,
+            "rsi14": momentum,
+        }
+
+    candles_15m = binance_closed_candles(base_url, symbol, "15")
+    local_high, local_low = analyzer.local_levels(candles_15m)
+    recommendation = "Buy" if total_score > 0 else "Sell"
+    confidence = "strong" if abs(total_score) >= 6 else "moderate" if abs(total_score) >= 3 else "low"
+
+    return {
+        "market_source": base_url,
+        "symbol": symbol,
+        "last_price": last_price,
+        "24h_change_pct": ticker.get("priceChangePercent"),
+        "15m_local_high": local_high,
+        "15m_local_low": local_low,
+        "total_score": total_score,
+        "recommendation": recommendation,
+        "confidence": confidence,
+        "timeframes": results,
+    }
+
+
+def run_signal_with_fallback(base_url: str, symbol: str) -> dict[str, object]:
+    errors: list[str] = []
+    try:
+        return run_signal(base_url, symbol)
+    except Exception as exc:
+        errors.append(f"{base_url}: {exc}")
+
+    for fallback_url in BINANCE_BASE_URLS:
+        try:
+            signal = run_binance_signal(fallback_url, symbol)
+            print("market_data_fallback: Bybit public market data failed; using Binance public market data")
+            print("market_data_errors:")
+            for error in errors:
+                print(f"- {error}")
+            return signal
+        except Exception as exc:
+            errors.append(f"{fallback_url}: {exc}")
+
+    raise RuntimeError("All market-data sources failed:\n" + "\n".join(f"- {error}" for error in errors))
+
+
 def print_signal(signal: dict[str, object]) -> None:
+    print(f"market_source: {signal.get('market_source', 'unknown')}")
     print(f"symbol: {signal['symbol']}")
     print(f"last_price: {signal['last_price']}")
     print(f"24h_change_pct: {signal['24h_change_pct']}")
@@ -297,6 +413,40 @@ def create_order(
     return response
 
 
+def build_fallback_plan(
+    signal: dict[str, object],
+    side: str,
+    margin: Decimal,
+    leverage: Decimal,
+) -> dict[str, Decimal | str]:
+    entry = Decimal(str(signal["last_price"]))
+    local_high = Decimal(str(signal["15m_local_high"]))
+    local_low = Decimal(str(signal["15m_local_low"]))
+    notional = margin * leverage
+    qty = (notional / entry).quantize(Decimal("0.001"))
+
+    if side == "Buy":
+        stop_loss = local_low if local_low < entry else entry * Decimal("0.99")
+        take_profit = local_high if local_high > entry else entry * Decimal("1.01")
+    else:
+        stop_loss = local_high if local_high > entry else entry * Decimal("1.01")
+        take_profit = local_low if local_low < entry else entry * Decimal("0.99")
+
+    return {
+        "symbol": str(signal["symbol"]),
+        "side": side,
+        "margin_mode": "REGULAR_MARGIN (Cross)",
+        "margin_usdt": margin,
+        "leverage": leverage,
+        "notional_usdt": notional,
+        "entry_reference": entry,
+        "qty": qty,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "target_source": f"{signal.get('market_source', 'fallback')} local high/low fallback",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a strong-signal Bybit automation check.")
     parser.add_argument("--execute", action="store_true", help="Place the eligible order.")
@@ -333,7 +483,7 @@ def main() -> int:
             print(f"Outside --ny-time {args.ny_time} +/- {args.ny_window_minutes} minutes. No action.")
             return 0
 
-    signal = run_signal(market_base_url, symbol)
+    signal = run_signal_with_fallback(market_base_url, symbol)
     print_signal(signal)
 
     if signal["confidence"] != "strong":
@@ -370,7 +520,13 @@ def main() -> int:
         take_profit_pnl_pct=args.take_profit_pnl_pct,
         entry_price=None,
     )
-    plan = order.build_plan(plan_args, market_base_url)
+    try:
+        plan = order.build_plan(plan_args, market_base_url)
+    except Exception as exc:
+        if args.execute:
+            raise
+        print(f"plan_fallback: Bybit public planning data failed; using signal local levels for dry-run only: {exc}")
+        plan = build_fallback_plan(signal, side, args.margin, args.leverage)
     order_link_id_value = order_link_id(args.order_link_prefix, symbol, args.ny_time)
     print(f"Bybit {order.environment_label(trade_base_url)} {plan['symbol']} automation plan")
     for key, value in plan.items():

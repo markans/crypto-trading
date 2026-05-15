@@ -22,6 +22,10 @@ from decimal import Decimal, ROUND_DOWN
 
 DEFAULT_BASE_URL = "https://api-demo.bybit.com"
 RECV_WINDOW = "5000"
+HTTP_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
+}
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -63,7 +67,7 @@ def environment_label(base_url: str) -> str:
 
 def public_get(base_url: str, path: str, params: dict[str, str]) -> dict:
     query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(f"{base_url}{path}?{query}", method="GET")
+    request = urllib.request.Request(f"{base_url}{path}?{query}", headers=HTTP_HEADERS, method="GET")
     with urllib.request.urlopen(request, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -96,6 +100,7 @@ def signed_request(
     ).hexdigest()
 
     headers = {
+        **HTTP_HEADERS,
         "Content-Type": "application/json",
         "X-BAPI-API-KEY": api_key,
         "X-BAPI-TIMESTAMP": timestamp,
