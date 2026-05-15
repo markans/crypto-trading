@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BYBIT_BASE_URL: ${{ secrets.BYBIT_BASE_URL }}
+      BYBIT_MARKET_BASE_URL: ${{ secrets.BYBIT_MARKET_BASE_URL }}
       BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
       BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
       EXECUTE_FLAG: ${{ github.event_name == 'schedule' && '--execute' || '' }}

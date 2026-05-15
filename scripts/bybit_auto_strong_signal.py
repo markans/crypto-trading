@@ -29,9 +29,10 @@ import bybit_demo_open_ethusdt as order
 
 
 DEFAULT_BASE_URL = "https://api-demo.bybit.com"
+LIVE_BASE_URL = "https://api.bybit.com"
 ALLOWED_BASE_URLS = {
     "https://api-demo.bybit.com",
-    "https://api.bybit.com",
+    LIVE_BASE_URL,
 }
 
 
@@ -55,6 +56,15 @@ def validate_base_url(base_url: str) -> str:
             "Example secret value: https://api-demo.bybit.com"
         )
     return normalized
+
+
+def resolve_market_base_url(trade_base_url: str) -> str:
+    configured = os.getenv("BYBIT_MARKET_BASE_URL")
+    if configured:
+        return validate_base_url(configured)
+    if "api-demo.bybit.com" in trade_base_url:
+        return LIVE_BASE_URL
+    return trade_base_url
 
 
 def ny_time_allowed(target: str, window_minutes: int, now: datetime | None = None) -> tuple[bool, str]:
@@ -308,10 +318,13 @@ def main() -> int:
     args = parser.parse_args()
 
     order.load_dotenv()
-    base_url = validate_base_url(os.getenv("BYBIT_BASE_URL") or DEFAULT_BASE_URL)
+    trade_base_url = validate_base_url(os.getenv("BYBIT_BASE_URL") or DEFAULT_BASE_URL)
+    market_base_url = resolve_market_base_url(trade_base_url)
     api_key = os.getenv("BYBIT_DEMO_API_KEY") or os.getenv("BYBIT_API_KEY", "")
     api_secret = os.getenv("BYBIT_DEMO_API_SECRET") or os.getenv("BYBIT_API_SECRET", "")
     symbol = analyzer.normalize_symbol(args.symbol)
+    print(f"trade_base_url: {trade_base_url}")
+    print(f"market_base_url: {market_base_url}")
 
     if args.ny_time:
         allowed, ny_now = ny_time_allowed(args.ny_time, args.ny_window_minutes)
@@ -320,7 +333,7 @@ def main() -> int:
             print(f"Outside --ny-time {args.ny_time} +/- {args.ny_window_minutes} minutes. No action.")
             return 0
 
-    signal = run_signal(base_url, symbol)
+    signal = run_signal(market_base_url, symbol)
     print_signal(signal)
 
     if signal["confidence"] != "strong":
@@ -335,7 +348,7 @@ def main() -> int:
         if not api_key or not api_secret:
             raise RuntimeError("Execution requires Bybit API credentials in .env or environment variables.")
 
-        position = get_position(base_url, symbol, api_key, api_secret)
+        position = get_position(trade_base_url, symbol, api_key, api_secret)
         print(f"current_position: {position}")
         if position["has_position"] and position["side"] != side and not args.allow_opposite_position_reentry:
             reason = f"existing {position['side']} position conflicts with strong {side} signal"
@@ -357,9 +370,9 @@ def main() -> int:
         take_profit_pnl_pct=args.take_profit_pnl_pct,
         entry_price=None,
     )
-    plan = order.build_plan(plan_args, base_url)
+    plan = order.build_plan(plan_args, market_base_url)
     order_link_id_value = order_link_id(args.order_link_prefix, symbol, args.ny_time)
-    print(f"Bybit {order.environment_label(base_url)} {plan['symbol']} automation plan")
+    print(f"Bybit {order.environment_label(trade_base_url)} {plan['symbol']} automation plan")
     for key, value in plan.items():
         print(f"{key}: {value}")
     print(f"order_link_id: {order_link_id_value}")
@@ -374,7 +387,7 @@ def main() -> int:
         return 0
 
     response = create_order(
-        base_url,
+        trade_base_url,
         api_key,
         api_secret,
         plan,
@@ -385,7 +398,7 @@ def main() -> int:
     print("Create market order: OK")
     print(json.dumps(response, indent=2))
     if not args.no_log:
-        append_log(args.log_file, signal, plan, f"executed {order.environment_label(base_url)}", "strong signal automation executed", response)
+        append_log(args.log_file, signal, plan, f"executed {order.environment_label(trade_base_url)}", "strong signal automation executed", response)
     return 0
 
 

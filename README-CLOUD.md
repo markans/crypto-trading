@@ -36,6 +36,17 @@ BYBIT_API_KEY
 BYBIT_API_SECRET
 ```
 
+Optional:
+
+```text
+BYBIT_MARKET_BASE_URL
+```
+
+When `BYBIT_BASE_URL` is demo, public market data defaults to
+`https://api.bybit.com` because GitHub-hosted runners may receive `403
+Forbidden` from the demo public market-data endpoint. Orders still use
+`BYBIT_BASE_URL`.
+
 For demo:
 
 ```text
