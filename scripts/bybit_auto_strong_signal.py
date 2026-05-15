@@ -42,10 +42,18 @@ def decimal_text(value: Decimal | str) -> str:
 
 
 def validate_base_url(base_url: str) -> str:
-    normalized = base_url.rstrip("/")
+    normalized = base_url.strip().strip('"').strip("'")
+    if "=" in normalized:
+        key, value = normalized.split("=", 1)
+        if key.strip() == "BYBIT_BASE_URL":
+            normalized = value.strip().strip('"').strip("'")
+    normalized = normalized.rstrip("/")
     if normalized not in ALLOWED_BASE_URLS:
         allowed = ", ".join(sorted(ALLOWED_BASE_URLS))
-        raise RuntimeError(f"BYBIT_BASE_URL must be one of: {allowed}")
+        raise RuntimeError(
+            f"BYBIT_BASE_URL must be only the URL value, one of: {allowed}. "
+            "Example secret value: https://api-demo.bybit.com"
+        )
     return normalized
 
 
@@ -322,18 +330,21 @@ def main() -> int:
             append_log(args.log_file, signal, None, "signal", reason, None)
         return 0
 
-    if not api_key or not api_secret:
-        raise RuntimeError("Position checks require Bybit API credentials in .env or environment variables.")
-
-    position = get_position(base_url, symbol, api_key, api_secret)
-    print(f"current_position: {position}")
     side = str(signal["recommendation"])
-    if position["has_position"] and position["side"] != side and not args.allow_opposite_position_reentry:
-        reason = f"existing {position['side']} position conflicts with strong {side} signal"
-        print(f"No order plan created: {reason}.")
-        if not args.no_log:
-            append_log(args.log_file, signal, None, "signal", reason, None)
-        return 0
+    if args.execute:
+        if not api_key or not api_secret:
+            raise RuntimeError("Execution requires Bybit API credentials in .env or environment variables.")
+
+        position = get_position(base_url, symbol, api_key, api_secret)
+        print(f"current_position: {position}")
+        if position["has_position"] and position["side"] != side and not args.allow_opposite_position_reentry:
+            reason = f"existing {position['side']} position conflicts with strong {side} signal"
+            print(f"No order plan created: {reason}.")
+            if not args.no_log:
+                append_log(args.log_file, signal, None, "signal", reason, None)
+            return 0
+    else:
+        print("current_position: skipped for dry-run; signed Bybit credentials are not used unless --execute is set")
 
     plan_args = SimpleNamespace(
         symbol=symbol,
