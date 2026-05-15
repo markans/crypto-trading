@@ -19,6 +19,14 @@ on:
         description: "Target America/New_York time."
         required: true
         default: "09:30"
+      enforce_time_window:
+        description: "For manual runs, require the New York time window."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
       execute:
         description: "Place eligible orders. Leave false for dry-run."
         required: true
@@ -51,6 +59,7 @@ jobs:
       AUTO_MARGIN: "25"
       AUTO_LEVERAGE: "5"
       AUTO_NY_TIME: "09:30"
+      TIME_ARGS: "--ny-time 09:30 --ny-window-minutes 45"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -67,11 +76,17 @@ jobs:
           INPUT_MARGIN: ${{ inputs.margin }}
           INPUT_LEVERAGE: ${{ inputs.leverage }}
           INPUT_NY_TIME: ${{ inputs.ny_time }}
+          INPUT_ENFORCE_TIME_WINDOW: ${{ inputs.enforce_time_window }}
         run: |
           printf 'AUTO_SYMBOL=%s\n' "$INPUT_SYMBOL" >> "$GITHUB_ENV"
           printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
           printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
           printf 'AUTO_NY_TIME=%s\n' "$INPUT_NY_TIME" >> "$GITHUB_ENV"
+          if [ "$INPUT_ENFORCE_TIME_WINDOW" = "true" ]; then
+            printf 'TIME_ARGS=--ny-time %s --ny-window-minutes 45\n' "$INPUT_NY_TIME" >> "$GITHUB_ENV"
+          else
+            printf 'TIME_ARGS=\n' >> "$GITHUB_ENV"
+          fi
 
       - name: Override manual execute flag
         if: github.event_name == 'workflow_dispatch' && inputs.execute == 'true'
@@ -86,15 +101,14 @@ jobs:
           test -n "$BYBIT_API_SECRET" || { echo "BYBIT_API_SECRET secret is required for execution"; exit 1; }
 
       - name: Run strong-signal automation
-        run: >
-          python3 scripts/bybit_auto_strong_signal.py
-          --symbol "$AUTO_SYMBOL"
-          --margin "$AUTO_MARGIN"
-          --leverage "$AUTO_LEVERAGE"
-          --tp-sl-mode structure
-          --structure-interval 60
-          --ny-time "$AUTO_NY_TIME"
-          --ny-window-minutes 45
+        run: |
+          python3 scripts/bybit_auto_strong_signal.py \
+            --symbol "$AUTO_SYMBOL" \
+            --margin "$AUTO_MARGIN" \
+            --leverage "$AUTO_LEVERAGE" \
+            --tp-sl-mode structure \
+            --structure-interval 60 \
+            $TIME_ARGS \
           $EXECUTE_FLAG
 
       - name: Upload signal log

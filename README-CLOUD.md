@@ -84,6 +84,8 @@ The workflow supports manual inputs:
 - `margin`, default `25`
 - `leverage`, default `5`
 - `ny_time`, default `09:30`
+- `enforce_time_window`, default `false` for manual runs
 - `execute`, default `false`
 
-Manual runs default to dry-run. Scheduled runs use `--execute`.
+Manual runs default to dry-run and run immediately. Scheduled runs use
+`--execute` and enforce the configured New York time window.
