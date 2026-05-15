@@ -1,0 +1,105 @@
+name: Bybit Daily Strong Signal
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Trading pair. Slash format is accepted."
+        required: true
+        default: "BTC/USDT"
+      margin:
+        description: "Margin in USDT."
+        required: true
+        default: "25"
+      leverage:
+        description: "Leverage."
+        required: true
+        default: "5"
+      ny_time:
+        description: "Target America/New_York time."
+        required: true
+        default: "09:30"
+      execute:
+        description: "Place eligible orders. Leave false for dry-run."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  schedule:
+    # GitHub Actions cron is UTC. These cover 09:30 America/New_York in EDT and EST.
+    - cron: "30 13 * * *"
+    - cron: "30 14 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bybit-daily-strong-signal
+  cancel-in-progress: false
+
+jobs:
+  strong-signal:
+    runs-on: ubuntu-latest
+    env:
+      BYBIT_BASE_URL: ${{ secrets.BYBIT_BASE_URL }}
+      BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+      BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
+      EXECUTE_FLAG: ${{ github.event_name == 'schedule' && '--execute' || '' }}
+      AUTO_SYMBOL: BTC/USDT
+      AUTO_MARGIN: "25"
+      AUTO_LEVERAGE: "5"
+      AUTO_NY_TIME: "09:30"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply manual inputs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_SYMBOL: ${{ inputs.symbol }}
+          INPUT_MARGIN: ${{ inputs.margin }}
+          INPUT_LEVERAGE: ${{ inputs.leverage }}
+          INPUT_NY_TIME: ${{ inputs.ny_time }}
+        run: |
+          printf 'AUTO_SYMBOL=%s\n' "$INPUT_SYMBOL" >> "$GITHUB_ENV"
+          printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
+          printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
+          printf 'AUTO_NY_TIME=%s\n' "$INPUT_NY_TIME" >> "$GITHUB_ENV"
+
+      - name: Override manual execute flag
+        if: github.event_name == 'workflow_dispatch' && inputs.execute == 'true'
+        run: echo "EXECUTE_FLAG=--execute" >> "$GITHUB_ENV"
+
+      - name: Validate execution secrets
+        if: env.EXECUTE_FLAG == '--execute'
+        run: |
+          test -n "$BYBIT_BASE_URL" || { echo "BYBIT_BASE_URL secret is required for execution"; exit 1; }
+          test "$BYBIT_BASE_URL" = "https://api-demo.bybit.com" -o "$BYBIT_BASE_URL" = "https://api.bybit.com" || { echo "BYBIT_BASE_URL must be https://api-demo.bybit.com or https://api.bybit.com"; exit 1; }
+          test -n "$BYBIT_API_KEY" || { echo "BYBIT_API_KEY secret is required for execution"; exit 1; }
+          test -n "$BYBIT_API_SECRET" || { echo "BYBIT_API_SECRET secret is required for execution"; exit 1; }
+
+      - name: Run strong-signal automation
+        run: >
+          python3 scripts/bybit_auto_strong_signal.py
+          --symbol "$AUTO_SYMBOL"
+          --margin "$AUTO_MARGIN"
+          --leverage "$AUTO_LEVERAGE"
+          --tp-sl-mode structure
+          --structure-interval 60
+          --ny-time "$AUTO_NY_TIME"
+          --ny-window-minutes 45
+          $EXECUTE_FLAG
+
+      - name: Upload signal log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-log
+          path: SIGNAL-LOG.md

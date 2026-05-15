@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+.codex-work/
+__pycache__/
+*.pyc
