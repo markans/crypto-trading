@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: bybit-daily-swing-signal
@@ -37,13 +38,6 @@ jobs:
     env:
       BYBIT_BASE_URL: ${{ secrets.BYBIT_BASE_URL }}
       BYBIT_MARKET_BASE_URL: ${{ secrets.BYBIT_MARKET_BASE_URL }}
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
       AUTO_TOP: "20"
       AUTO_SYMBOL: ""
       AUTO_MARGIN: "25"
@@ -70,14 +64,6 @@ jobs:
           printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
           printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
 
-      - name: Check notification config
-        run: |
-          if [ -z "${SMTP_HOST}" ] || [ -z "${EMAIL_TO}" ]; then
-            echo "::warning::SMTP_HOST or EMAIL_TO secret is not set - strong-signal emails will NOT be sent."
-          else
-            echo "Email configured: strong signals will be sent to ${EMAIL_TO} via ${SMTP_HOST}."
-          fi
-
       - name: Run swing-signal generator
         run: |
           if [ -n "${AUTO_SYMBOL}" ]; then
@@ -86,15 +72,42 @@ jobs:
               --margin "$AUTO_MARGIN" \
               --leverage "$AUTO_LEVERAGE" \
               --tp-sl-mode structure \
-              --structure-interval D
+              --structure-interval D \
+              --no-email \
+              --summary-file strong-signals.md
           else
             python3 scripts/bybit_signal.py \
               --top-marketcap "$AUTO_TOP" \
               --margin "$AUTO_MARGIN" \
               --leverage "$AUTO_LEVERAGE" \
               --tp-sl-mode structure \
-              --structure-interval D
+              --structure-interval D \
+              --no-email \
+              --summary-file strong-signals.md
           fi
+
+      - name: Open issue for strong signals
+        if: hashFiles('strong-signals.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # hashFiles is empty only when the file is absent; it may still be a
+          # 0-byte placeholder when no signal qualified, so guard on size too.
+          if [ ! -s strong-signals.md ]; then
+            echo "No strong signals; no issue created."
+            exit 0
+          fi
+          title="Strong swing signals - $(date -u +'%Y-%m-%d %H:%M UTC')"
+          {
+            cat strong-signals.md
+            echo
+            echo "cc @${{ github.repository_owner }}"
+          } > issue-body.md
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "$title" \
+            --body-file issue-body.md \
+            --assignee "${{ github.repository_owner }}"
 
       - name: Upload signal log
         if: always()

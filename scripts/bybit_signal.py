@@ -350,15 +350,15 @@ def email_signal(
     return notify_email.send_email(subject, "\n".join(body_lines))
 
 
-def email_digest(
+def digest_subject_body(
     results: list[dict[str, object]],
     failures: list[tuple[str, str]],
     min_rank: int,
-) -> bool:
-    """Send one summary email for a multi-symbol scan. Returns True if sent."""
+) -> tuple[str, str] | None:
+    """Build the (subject, body) for a multi-symbol scan, or None if nothing qualifies."""
     qualifying = [r for r in results if CONFIDENCE_RANK[str(r["confidence"])] >= min_rank]
     if not qualifying:
-        return False
+        return None
 
     now = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M %Z")
     strong = [r for r in qualifying if r["confidence"] == "strong"]
@@ -389,8 +389,36 @@ def email_digest(
         body_lines.append("")
 
     body_lines.append("This is an alert only. No order was placed.")
-    notify_email.send_email(subject, "\n".join(body_lines))
-    return True
+    return subject, "\n".join(body_lines)
+
+
+def email_digest(
+    results: list[dict[str, object]],
+    failures: list[tuple[str, str]],
+    min_rank: int,
+) -> bool:
+    """Send one summary email for a multi-symbol scan. Returns True if sent."""
+    payload = digest_subject_body(results, failures, min_rank)
+    if payload is None:
+        return False
+    subject, body = payload
+    return notify_email.send_email(subject, body)
+
+
+def write_summary_file(
+    path: str,
+    results: list[dict[str, object]],
+    failures: list[tuple[str, str]],
+    min_rank: int,
+) -> bool:
+    """Write the digest body to `path` for an external notifier (e.g. a GitHub
+    issue). Writes an empty file when nothing qualifies. Returns True if content
+    was written."""
+    payload = digest_subject_body(results, failures, min_rank)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(payload[1] + "\n" if payload else "")
+    print(f"summary_file: {'written' if payload else 'empty'} -> {path}")
+    return payload is not None
 
 
 def email_failure(symbol: str, error: str) -> None:
@@ -562,6 +590,9 @@ def run(args: argparse.Namespace) -> int:
         if top_count and len(results) >= top_count:
             break
 
+    if args.summary_file:
+        write_summary_file(args.summary_file, results, failures, min_rank)
+
     if args.no_email:
         return 0
 
@@ -613,6 +644,11 @@ def main() -> int:
     parser.add_argument("--log-file", default="SIGNAL-LOG.md")
     parser.add_argument("--no-log", action="store_true")
     parser.add_argument("--no-email", action="store_true", help="Do not send any email notification.")
+    parser.add_argument(
+        "--summary-file",
+        help="Write the strong-signal digest to this file (empty if none) for an external "
+        "notifier such as a GitHub issue. Independent of --no-email.",
+    )
     parser.add_argument(
         "--email-min-confidence",
         choices=["low", "moderate", "strong"],
