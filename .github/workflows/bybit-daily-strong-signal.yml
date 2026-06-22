@@ -70,6 +70,14 @@ jobs:
           printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
           printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
 
+      - name: Check notification config
+        run: |
+          if [ -z "${SMTP_HOST}" ] || [ -z "${EMAIL_TO}" ]; then
+            echo "::warning::SMTP_HOST or EMAIL_TO secret is not set - strong-signal emails will NOT be sent."
+          else
+            echo "Email configured: strong signals will be sent to ${EMAIL_TO} via ${SMTP_HOST}."
+          fi
+
       - name: Run swing-signal generator
         run: |
           if [ -n "${AUTO_SYMBOL}" ]; then

@@ -336,7 +336,7 @@ def email_signal(
     signal: dict[str, object],
     plan: dict[str, Decimal | str] | None,
     reason: str,
-) -> None:
+) -> bool:
     symbol = signal["symbol"]
     recommendation = signal["recommendation"]
     confidence = signal["confidence"]
@@ -347,7 +347,7 @@ def email_signal(
     if plan:
         body_lines += ["", "Suggested plan (manual action required, no order placed):", *plan_lines(plan)]
     body_lines += ["", "This is an alert only. No order was placed."]
-    notify_email.send_email(subject, "\n".join(body_lines))
+    return notify_email.send_email(subject, "\n".join(body_lines))
 
 
 def email_digest(
@@ -565,21 +565,30 @@ def run(args: argparse.Namespace) -> int:
     if args.no_email:
         return 0
 
-    if single_mode and results:
-        result = results[0]
+    qualifying = [r for r in results if CONFIDENCE_RANK[str(r["confidence"])] >= min_rank]
+    if not qualifying:
+        print(f"No signals at or above '{args.email_min_confidence}'; no notification needed.")
+        return 0
+
+    symbols = ", ".join(str(r["signal"]["symbol"]) for r in qualifying)  # type: ignore[index]
+    print(f"Notifying: {len(qualifying)} signal(s) >= {args.email_min_confidence} ({symbols})")
+
+    if single_mode:
+        result = qualifying[0]
         signal = result["signal"]
         assert isinstance(signal, dict)
         plan = result["plan"]
-        if CONFIDENCE_RANK[str(result["confidence"])] >= min_rank:
-            email_signal(
-                signal,
-                plan if isinstance(plan, dict) else None,
-                str(result["reason"]),
-            )
-    elif not single_mode:
+        sent = email_signal(signal, plan if isinstance(plan, dict) else None, str(result["reason"]))
+    else:
         sent = email_digest(results, failures, min_rank)
-        if not sent:
-            print("No signals at or above the email threshold; no digest email sent.")
+
+    if not sent:
+        print(
+            "ERROR: a strong-signal notification was warranted but no email was delivered. "
+            "Check the SMTP_HOST / SMTP_USERNAME / SMTP_PASSWORD / EMAIL_TO configuration "
+            "(see the 'email:' line above for the reason)."
+        )
+        return 2
 
     return 0
 
