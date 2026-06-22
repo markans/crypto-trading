@@ -1,84 +1,77 @@
-# Trader.dev Bybit API Runbooks
+# Trader.dev Bybit Signal Generator
 
-Use these runbooks for placing Bybit linear perpetual orders through the local Python scripts.
+This repo generates **trading signals** for Bybit linear perpetuals. It is
+signal-only: it reads public market data, scores the trend, and reports a
+recommendation plus a suggested entry / stop-loss / take-profit plan. **It never
+places orders.** Acting on a signal is always a manual decision.
 
-The order script is:
+## Scripts
 
 ```bash
-python3 scripts/bybit_demo_open_ethusdt.py
+# Read-only analyzer: prints recommendation, confidence, EMA/RSI scores.
+python3 scripts/bybit_analyze_symbol.py --symbol BTC/USDT
+
+# Signal generator: analyzer + suggested plan + log + email notification.
+python3 scripts/bybit_signal.py --symbol BTC/USDT --margin 25 --leverage 5 \
+    --tp-sl-mode structure --structure-interval 60
+
+# Suggested plan only (entry/SL/TP for a chosen side, no orders).
+python3 scripts/bybit_signal_plan.py --symbol BTC/USDT --side Buy \
+    --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
 ```
 
-Despite the filename, the script is symbol-agnostic. It supports any Bybit V5 linear perpetual symbol your account can trade, such as `BTC/USDT`, `ETH/USDT`, `SOL/USDT`, or `DOGE/USDT`.
+Symbols can be entered with or without a slash; they are normalized before use
+(`BTC/USDT` -> `BTCUSDT`).
 
-Symbols can be entered with or without a slash. The scripts normalize them before calling Bybit:
+The `--margin` and `--leverage` values are used only to size the suggested plan
+(quantity and PnL-based targets). No funds are committed and no API credentials
+are required, because only public market-data endpoints are used.
+
+## Signal Output
+
+`bybit_signal.py` builds a suggested plan only when `confidence: strong`. For
+weaker signals it still reports the recommendation and logs/emails the summary,
+but no plan is produced. Each run:
+
+- prints the signal to the console
+- appends a record to `SIGNAL-LOG.md`
+- emails the signal when email is configured (see below)
+
+## Email Notifications
+
+Set SMTP variables in `.env` (see [.env.example](.env.example)) to receive
+signal alerts by email:
 
 ```text
-BTC/USDT -> BTCUSDT
-ETH/USDT -> ETHUSDT
-SOL/USDT -> SOLUSDT
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=you@example.com
+SMTP_PASSWORD=your_app_password
+SMTP_USE_TLS=true
+EMAIL_FROM=you@example.com
+EMAIL_TO=you@example.com
 ```
 
-## Choose The Correct Runbook
+Email is best-effort: if SMTP is not configured, the run still prints and logs
+the signal and simply skips the email. By default only `strong` signals are
+emailed (`--email-min-confidence low|moderate|strong`), and a failure email is
+sent if a run errors out. Use `--no-email` to disable email entirely.
 
-For the current demo setup:
+For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833),
+not your account password.
 
-[README-DEMO.md](README-DEMO.md)
+## Market Data
 
-For live API placement after replacing `.env` with live credentials:
+- Demo public endpoint: `https://api-demo.bybit.com`
+- Live public endpoint: `https://api.bybit.com`
+- If Bybit public data is blocked, the signal generator falls back to Binance /
+  Binance.US public market data.
 
-[README-LIVE.md](README-LIVE.md)
+`BYBIT_BASE_URL` selects the public data source. Because only public endpoints
+are used, demo and live differ only in the price feed, not in any trading
+behavior.
 
-For GitHub Actions cloud automation:
+## Cloud Automation
 
-[README-CLOUD.md](README-CLOUD.md)
-
-## Important
-
-- `.env` controls whether the script uses demo or live.
-- Demo endpoint: `https://api-demo.bybit.com`
-- Live endpoint: `https://api.bybit.com`
-- The script performs a dry-run unless `--execute` is passed.
-- Always dry-run first and inspect `symbol`, `side`, `qty`, `stop_loss`, and `take_profit`.
-
-## Daily Strong-Signal Automation
-
-The daily automation script is:
-
-```bash
-python3 scripts/bybit_auto_strong_signal.py
-```
-
-It runs the local signal analyzer first and continues only when:
-
-```text
-confidence: strong
-```
-
-When eligible, it uses the analyzer recommendation as the order side. If there is
-already a same-side position, it re-enters/adds another order. If there is an
-opposite-side position, it skips by default to avoid accidentally reducing or
-flipping a one-way position.
-
-Dry-run:
-
-```bash
-python3 scripts/bybit_auto_strong_signal.py --symbol BTC/USDT --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
-```
-
-Execute:
-
-```bash
-python3 scripts/bybit_auto_strong_signal.py --symbol BTC/USDT --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60 --execute
-```
-
-Run only near 9:30 AM New York time:
-
-```bash
-python3 scripts/bybit_auto_strong_signal.py --symbol BTC/USDT --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60 --ny-time 09:30 --ny-window-minutes 45 --execute
-```
-
-The GitHub Actions workflow at
-`.github/workflows/bybit-daily-strong-signal.yml` schedules this every day for
-9:30 AM America/New_York. GitHub cron uses UTC, so the workflow schedules both
-EST and EDT equivalents and the script skips whichever run is outside the New
-York time window. Each workflow run uploads `SIGNAL-LOG.md` as an artifact.
+For the daily scheduled signal via GitHub Actions, see
+[README-CLOUD.md](README-CLOUD.md).

@@ -44,3 +44,24 @@
 - reason: Explicit user instruction to open/place the trade. Command included --execute.
 - result_r_multiple: pending
 - bybit_order_id: 8540fb0a-dd59-4af7-84e9-9f33d1b457af
+
+## 2026-06-15 09:57:56 EDT - BTCUSDT signal
+
+- date_time: 2026-06-15 09:57:56 EDT
+- symbol: BTCUSDT
+- analyzer_recommendation: Buy
+- confidence: strong
+- 15m_score: 3
+- 60m_score: 3
+- 240m_score: 3
+- side_considered: Buy
+- entry_reference: 66427.9
+- stop_loss: 65468.6
+- take_profit: 66597.6
+- reward_risk: 0.18
+- margin_usdt: 25
+- leverage: 5
+- qty: 0.001
+- signal_comment: Automated daily New York time check. No order is placed; act manually.
+- reason: strong signal; suggested plan below. Act manually if you choose to trade.
+- result_r_multiple: N/A

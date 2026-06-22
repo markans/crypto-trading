@@ -19,6 +19,13 @@ HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
 }
 
+# Swing-trading timeframe set: 4h / daily / weekly trend alignment.
+# Bybit kline intervals; "D" and "W" are daily and weekly candles.
+INTERVALS = ["240", "D", "W"]
+INTERVAL_LABELS = {"240": "4h", "D": "1d", "W": "1w"}
+# Structure (swing high/low) timeframe used to derive stop-loss / take-profit.
+STRUCTURE_INTERVAL = "D"
+
 
 def normalize_symbol(symbol: str) -> str:
     return symbol.replace("/", "").replace("-", "").upper()
@@ -130,7 +137,7 @@ def main() -> int:
 
     results = {}
     total_score = 0
-    for interval in ["15", "60", "240"]:
+    for interval in INTERVALS:
         closes = get_closed_closes(base_url, symbol, interval)
         score, fast, slow, momentum = timeframe_score(closes)
         total_score += score
@@ -142,22 +149,22 @@ def main() -> int:
             "rsi14": momentum,
         }
 
-    candles_15m = get_closed_candles(base_url, symbol, "15")
-    local_high, local_low = local_levels(candles_15m)
+    structure_candles = get_closed_candles(base_url, symbol, STRUCTURE_INTERVAL)
+    local_high, local_low = local_levels(structure_candles)
     recommendation = "Buy" if total_score > 0 else "Sell"
     confidence = "strong" if abs(total_score) >= 6 else "moderate" if abs(total_score) >= 3 else "low"
 
     print(f"symbol: {symbol}")
     print(f"last_price: {last_price}")
     print(f"24h_change_pct: {ticker.get('price24hPcnt')}")
-    print(f"15m_local_high: {local_high}")
-    print(f"15m_local_low: {local_low}")
+    print(f"local_high: {local_high}")
+    print(f"local_low: {local_low}")
     print(f"total_score: {total_score}")
     print(f"recommendation: {recommendation}")
     print(f"confidence: {confidence}")
     for interval, data in results.items():
         print(
-            f"{interval}m: score={data['score']} close={data['last_close']} "
+            f"{INTERVAL_LABELS.get(interval, interval)}: score={data['score']} close={data['last_close']} "
             f"ema21={data['ema21']:.8f} ema55={data['ema55']:.8f} rsi14={data['rsi14']:.2f}"
         )
     return 0

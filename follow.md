@@ -217,8 +217,8 @@ Requirements:
 - Check market conditions
 - Analyze indicators
 - Analyze news sentiment
-- Execute trades automatically
-- Enforce strict 1% risk management
+- Send a trading signal (recommendation + suggested plan) by email
+- Never place orders automatically; acting on a signal stays manual
 ```
 
 ---
@@ -236,7 +236,7 @@ Requirements:
 - Create a private repository
 - Store secrets securely
 - Run every 10 minutes
-- Execute automatically in the cloud
+- Email the signal from the cloud (no automatic order placement)
 ```
 
 Codex will:
@@ -262,11 +262,11 @@ Always implement:
 
 # Final Result
 
-You now have a fully automated crypto trading bot that:
+You now have a 24/7 crypto trading signal bot that:
 
 1. Pulls Bitcoin data from Bybit
 2. Analyzes indicators
 3. Reads crypto news sentiment
-4. Makes trading decisions
-5. Executes trades automatically
+4. Produces a trading signal with a suggested plan
+5. Emails the signal to you (you decide whether to trade)
 6. Runs continuously in the cloud

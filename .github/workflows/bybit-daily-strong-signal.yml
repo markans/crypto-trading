@@ -1,66 +1,53 @@
-name: Bybit Daily Strong Signal
+name: Bybit Daily Swing Signal
 
 on:
   workflow_dispatch:
     inputs:
-      symbol:
-        description: "Trading pair. Slash format is accepted."
+      top_marketcap:
+        description: "Number of top market-cap symbols to scan."
         required: true
-        default: "BTC/USDT"
+        default: "20"
+      symbol:
+        description: "Optional single pair to scan instead of the top list. Leave blank to scan the top list."
+        required: false
+        default: ""
       margin:
-        description: "Margin in USDT."
+        description: "Margin in USDT (used only to size the suggested plan)."
         required: true
         default: "25"
       leverage:
-        description: "Leverage."
+        description: "Leverage (used only to size the suggested plan)."
         required: true
         default: "5"
-      ny_time:
-        description: "Target America/New_York time."
-        required: true
-        default: "09:30"
-      enforce_time_window:
-        description: "For manual runs, require the New York time window."
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
-      execute:
-        description: "Place eligible orders. Leave false for dry-run."
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
   schedule:
-    # GitHub Actions cron is UTC. These cover 09:30 America/New_York in EDT and EST.
-    - cron: "30 13 * * *"
-    - cron: "30 14 * * *"
+    # GitHub Actions cron is UTC. Run shortly after the daily candle close (00:00 UTC)
+    # so the swing signal keys off a freshly closed daily candle.
+    - cron: "5 0 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: bybit-daily-strong-signal
+  group: bybit-daily-swing-signal
   cancel-in-progress: false
 
 jobs:
-  strong-signal:
+  swing-signal:
     runs-on: ubuntu-latest
     env:
       BYBIT_BASE_URL: ${{ secrets.BYBIT_BASE_URL }}
       BYBIT_MARKET_BASE_URL: ${{ secrets.BYBIT_MARKET_BASE_URL }}
-      BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-      BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
-      EXECUTE_FLAG: ${{ github.event_name == 'schedule' && '--execute' || '' }}
-      AUTO_SYMBOL: BTC/USDT
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      AUTO_TOP: "20"
+      AUTO_SYMBOL: ""
       AUTO_MARGIN: "25"
       AUTO_LEVERAGE: "5"
-      AUTO_NY_TIME: "09:30"
-      TIME_ARGS: "--ny-time 09:30 --ny-window-minutes 45"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -73,44 +60,33 @@ jobs:
       - name: Apply manual inputs
         if: github.event_name == 'workflow_dispatch'
         env:
+          INPUT_TOP: ${{ inputs.top_marketcap }}
           INPUT_SYMBOL: ${{ inputs.symbol }}
           INPUT_MARGIN: ${{ inputs.margin }}
           INPUT_LEVERAGE: ${{ inputs.leverage }}
-          INPUT_NY_TIME: ${{ inputs.ny_time }}
-          INPUT_ENFORCE_TIME_WINDOW: ${{ inputs.enforce_time_window }}
         run: |
+          printf 'AUTO_TOP=%s\n' "$INPUT_TOP" >> "$GITHUB_ENV"
           printf 'AUTO_SYMBOL=%s\n' "$INPUT_SYMBOL" >> "$GITHUB_ENV"
           printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
           printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
-          printf 'AUTO_NY_TIME=%s\n' "$INPUT_NY_TIME" >> "$GITHUB_ENV"
-          if [ "$INPUT_ENFORCE_TIME_WINDOW" = "true" ]; then
-            printf 'TIME_ARGS=--ny-time %s --ny-window-minutes 45\n' "$INPUT_NY_TIME" >> "$GITHUB_ENV"
+
+      - name: Run swing-signal generator
+        run: |
+          if [ -n "${AUTO_SYMBOL}" ]; then
+            python3 scripts/bybit_signal.py \
+              --symbol "$AUTO_SYMBOL" \
+              --margin "$AUTO_MARGIN" \
+              --leverage "$AUTO_LEVERAGE" \
+              --tp-sl-mode structure \
+              --structure-interval D
           else
-            printf 'TIME_ARGS=\n' >> "$GITHUB_ENV"
+            python3 scripts/bybit_signal.py \
+              --top-marketcap "$AUTO_TOP" \
+              --margin "$AUTO_MARGIN" \
+              --leverage "$AUTO_LEVERAGE" \
+              --tp-sl-mode structure \
+              --structure-interval D
           fi
-
-      - name: Override manual execute flag
-        if: github.event_name == 'workflow_dispatch' && inputs.execute == 'true'
-        run: echo "EXECUTE_FLAG=--execute" >> "$GITHUB_ENV"
-
-      - name: Validate execution secrets
-        if: env.EXECUTE_FLAG == '--execute'
-        run: |
-          test -n "$BYBIT_BASE_URL" || { echo "BYBIT_BASE_URL secret is required for execution"; exit 1; }
-          test "$BYBIT_BASE_URL" = "https://api-demo.bybit.com" -o "$BYBIT_BASE_URL" = "https://api.bybit.com" || { echo "BYBIT_BASE_URL must be https://api-demo.bybit.com or https://api.bybit.com"; exit 1; }
-          test -n "$BYBIT_API_KEY" || { echo "BYBIT_API_KEY secret is required for execution"; exit 1; }
-          test -n "$BYBIT_API_SECRET" || { echo "BYBIT_API_SECRET secret is required for execution"; exit 1; }
-
-      - name: Run strong-signal automation
-        run: |
-          python3 scripts/bybit_auto_strong_signal.py \
-            --symbol "$AUTO_SYMBOL" \
-            --margin "$AUTO_MARGIN" \
-            --leverage "$AUTO_LEVERAGE" \
-            --tp-sl-mode structure \
-            --structure-interval 60 \
-            $TIME_ARGS \
-          $EXECUTE_FLAG
 
       - name: Upload signal log
         if: always()

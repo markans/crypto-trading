@@ -4,20 +4,18 @@ Bybit Signal Workflow
 Purpose
 -------
 
-Use this workflow when you want Codex to analyze a Bybit symbol and prepare or
-place a Bybit order from the user's explicit instructions.
+Use this workflow when you want to analyze a Bybit symbol and produce a trading
+signal with commentary. This repo is signal-only. Nothing in it places, opens,
+or submits orders. Acting on a signal is always a manual decision made outside
+of these scripts.
 
-The safe default is:
+The flow is:
 
-1. Ask for a read-only signal using Bybit market data.
-2. Treat the recommendation, confidence, levels, and risk/reward as commentary.
-3. If the user asks to analyze, plan, preview, or dry-run, run the order script
-   without --execute.
-4. If the user asks to open, place, enter, execute, or submit a trade, run the
-   order script with --execute and follow the user's requested side, margin,
-   leverage, and TP/SL parameters.
-
-Nothing should place an order unless the command includes --execute.
+1. Read public Bybit (or fallback) market data.
+2. Score the trend and report recommendation, confidence, levels, and the
+   risk/reward of a suggested plan.
+3. Treat all output as commentary. It does not approve, reject, or place a
+   trade.
 
 
 Core Skill
@@ -28,8 +26,8 @@ Use the installed skill:
   generating-trading-signals
 
 Signal analysis should follow the core generating-trading-signals skill. This
-file only defines the local Bybit data path, symbol format, dry-run flow, and
-order safety boundaries for this repo.
+file only defines the local Bybit data path, symbol format, and signal flow for
+this repo.
 
 Use this workflow for prompts such as:
 
@@ -37,45 +35,36 @@ Use this workflow for prompts such as:
   check indicators
   analyze signals
 
-For this repo, use the skill together with these local Bybit scripts:
+For this repo, use the skill together with these local scripts:
 
-  scripts/bybit_analyze_symbol.py
-  scripts/bybit_demo_open_ethusdt.py
+  scripts/bybit_analyze_symbol.py   read-only analyzer
+  scripts/bybit_signal.py           analyzer + suggested plan + log + email
+  scripts/bybit_signal_plan.py      suggested entry/SL/TP plan for a chosen side
 
-The signal step must stay read-only. The signal does not approve, reject, or
-change the user's requested trade direction. The order script should be run
-without --execute for plan/dry-run requests and with --execute for explicit
-open/place/enter/execute/submit trade requests.
+All of these are read-only. None of them place orders.
 
 
 Confirmed Bybit Data Access
 ---------------------------
 
-Confirmed from this workspace on 2026-05-14:
+The analyzer reaches the default Bybit demo public market-data endpoint:
 
   python3 scripts/bybit_analyze_symbol.py --symbol BTCUSDT
+  -> https://api-demo.bybit.com
 
-successfully reached the default Bybit demo public market-data endpoint:
-
-  https://api-demo.bybit.com
-
-Also confirmed:
+Live public market data:
 
   env BYBIT_BASE_URL=https://api.bybit.com python3 scripts/bybit_analyze_symbol.py --symbol BTCUSDT
+  -> https://api.bybit.com
 
-successfully reached Bybit live public market data:
-
-  https://api.bybit.com
-
-The read-only analyzer uses unsigned public market endpoints and does not need
-API credentials. API keys are only needed when using --execute with the order
-script.
+These are unsigned public endpoints and need no API credentials. The repo no
+longer uses signed (trading) endpoints at all.
 
 
 Important Repo Rules
 --------------------
 
-Use Bybit symbol format without a slash:
+Use Bybit symbol format without a slash (the scripts normalize automatically):
 
   BTC/USDT -> BTCUSDT
   ETH/USDT -> ETHUSDT
@@ -83,24 +72,17 @@ Use Bybit symbol format without a slash:
 
 Do not commit .env.
 
-For demo trading, .env should contain:
+For signal generation, .env only needs a market-data source and (optionally)
+email settings:
 
   BYBIT_BASE_URL=https://api-demo.bybit.com
-  BYBIT_API_KEY=your_demo_api_key
-  BYBIT_API_SECRET=your_demo_api_secret
-
-or:
-
-  BYBIT_BASE_URL=https://api-demo.bybit.com
-  BYBIT_DEMO_API_KEY=your_demo_api_key
-  BYBIT_DEMO_API_SECRET=your_demo_api_secret
-
-The read-only analyzer defaults to demo:
-
-  https://api-demo.bybit.com
-
-The order script reads .env and also defaults to demo if BYBIT_BASE_URL is not
-set.
+  SMTP_HOST=smtp.gmail.com
+  SMTP_PORT=587
+  SMTP_USERNAME=you@example.com
+  SMTP_PASSWORD=your_app_password
+  SMTP_USE_TLS=true
+  EMAIL_FROM=you@example.com
+  EMAIL_TO=you@example.com
 
 
 Read-Only Signal Command
@@ -113,10 +95,6 @@ Run the analyzer:
 Examples:
 
   python3 scripts/bybit_analyze_symbol.py --symbol ETHUSDT
-  python3 scripts/bybit_analyze_symbol.py --symbol SOLUSDT
-
-Use live public market data explicitly:
-
   env BYBIT_BASE_URL=https://api.bybit.com python3 scripts/bybit_analyze_symbol.py --symbol BTCUSDT
 
 The analyzer prints:
@@ -129,92 +107,54 @@ The analyzer prints:
   total_score
   recommendation
   confidence
-  15m score, EMA21, EMA55, RSI14
-  60m score, EMA21, EMA55, RSI14
-  240m score, EMA21, EMA55, RSI14
+  15m / 60m / 240m score, EMA21, EMA55, RSI14
 
-Basic interpretation for commentary only:
+Interpretation for commentary only:
 
-  confidence=strong or moderate -> possible candidate
+  confidence=strong or moderate -> stronger candidate
   confidence=low                -> weaker signal / higher caution
   recommendation=Buy            -> analyzer leans long
   recommendation=Sell           -> analyzer leans short
 
-Prefer trades where 60m and 240m agree with the recommendation, but this is a
-commentary note only. Do not use it to block a user-specified order.
+Prefer setups where 60m and 240m agree with the recommendation.
 
 
-Recommended Signal Prompt
--------------------------
+Signal Generator (with plan + log + email)
+-------------------------------------------
 
-Use this prompt when you want a signal:
+  python3 scripts/bybit_signal.py --symbol BTCUSDT --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
 
-  Use the generating-trading-signals skill. Analyze BTCUSDT using Bybit API
-  market data and the local repo analyzer. Do not place an order. Return:
-  recommendation, confidence, 15m/1h/4h scores, RSI/EMA notes, local high/low,
-  requested trade direction, invalidation, and risk commentary. Do not approve
-  or reject the user's requested trade.
+This:
 
-For another symbol, replace BTCUSDT:
+  - prints the signal
+  - builds a suggested entry/SL/TP plan when confidence is strong
+  - appends a record to SIGNAL-LOG.md
+  - emails the signal when SMTP is configured
 
-  Use the generating-trading-signals skill. Analyze SOLUSDT using Bybit API
-  market data and the local repo analyzer. Do not place an order. Return signal
-  commentary and explain the risk. Do not approve or reject the user's requested
-  trade.
+Useful flags:
 
+  --no-email                  do not send any email
+  --email-min-confidence X    only email at/above low|moderate|strong (default strong)
+  --no-log                    do not write to SIGNAL-LOG.md
+  --ny-time HH:MM             only run inside a New York time window
 
-Signal Commentary Checklist
----------------------------
-
-When commenting on a requested order, answer these:
-
-1. Is confidence moderate or strong?
-2. Do the 60m and 240m scores agree with the recommendation?
-3. Is the symbol liquid enough for the position size?
-4. Is the market extended after a large candle?
-5. Is there a clear invalidation level?
-6. Is the likely reward/risk at least 1.5:1?
-7. Is this still demo mode, unless you intentionally switched to live?
-
-These answers are commentary only. Do not convert them into approve/reject,
-take/skip, or direction-changing decisions when the user has provided explicit
-trade instructions.
+margin and leverage size the suggested plan only. No funds are committed.
 
 
-Dry-Run Order Plan
-------------------
+Suggested Plan Only
+-------------------
 
-When the user asks for a plan, preview, or dry-run, run a dry-run that follows
-the user's parameters. This does not place an order.
+When you only want a plan for a chosen side (no scoring, no email):
 
-When the user asks to open, place, enter, execute, or submit a trade, use the
-same parameters and add --execute.
+  python3 scripts/bybit_signal_plan.py --symbol BTCUSDT --side Buy --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
+  python3 scripts/bybit_signal_plan.py --symbol BTCUSDT --side Sell --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 240
 
-Long example:
+It prints:
 
-  python3 scripts/bybit_demo_open_ethusdt.py --symbol BTCUSDT --side Buy --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
+  symbol, side, margin_usdt, leverage, notional_usdt, entry_reference, qty,
+  stop_loss, take_profit, target_source
 
-Short example:
-
-  python3 scripts/bybit_demo_open_ethusdt.py --symbol BTCUSDT --side Sell --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60
-
-For slower 4h structure:
-
-  python3 scripts/bybit_demo_open_ethusdt.py --symbol BTCUSDT --side Buy --margin 50 --leverage 5 --tp-sl-mode structure --structure-interval 240
-
-The dry-run prints:
-
-  symbol
-  side
-  margin_usdt
-  leverage
-  notional_usdt
-  entry_reference
-  qty
-  stop_loss
-  take_profit
-  target_source
-  order_payload
+This is a suggestion only. It never places an order.
 
 
 Risk/Reward Check
@@ -230,107 +170,40 @@ For a Sell:
   risk   = stop_loss - entry_reference
   reward = entry_reference - take_profit
 
-Reward/risk:
-
-  reward / risk
-
-Comment if reward/risk is below 1.5.
+Reward/risk = reward / risk. Comment if it is below 1.5.
 
 Also comment if:
 
-  stop_loss is too close to entry
-  take_profit is too close to entry
+  stop_loss or take_profit is too close to entry
   stop_loss or take_profit is on the wrong side of entry
   qty is larger than intended
   leverage is higher than intended
-  the setup conflicts with the analyzer recommendation
 
-For a Buy, the dry-run must satisfy:
-
-  stop_loss < entry_reference < take_profit
-
-For a Sell, the dry-run must satisfy:
-
-  take_profit < entry_reference < stop_loss
-
-
-Execution
----------
-
-Execute when the user explicitly asks to open, place, enter, execute, or submit
-a trade. The analyzer output is commentary only and must not be treated as
-approval or rejection.
-
-Execution adds --execute:
-
-  python3 scripts/bybit_demo_open_ethusdt.py --symbol BTCUSDT --side Buy --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60 --execute
-
-If Bybit returns leverage not modified:
-
-  retCode: 110043
-
-rerun with:
-
-  --skip-leverage
-
-Example:
-
-  python3 scripts/bybit_demo_open_ethusdt.py --symbol BTCUSDT --side Buy --margin 25 --leverage 5 --tp-sl-mode structure --structure-interval 60 --skip-leverage --execute
-
-
-Full Workflow Prompt
---------------------
-
-Use this when you want Codex to do the analysis and prepare a dry-run command,
-but not execute:
-
-  Use the generating-trading-signals skill for BTCUSDT. Query Bybit market data
-  with the local analyzer, explain the signal as commentary only, and give me
-  the exact dry-run command that follows my requested side, margin, leverage,
-  and TP/SL parameters. Do not run --execute.
-
-Use this when you want Codex to also run the dry-run:
-
-  Use the generating-trading-signals skill for BTCUSDT. Query Bybit market data
-  with the local analyzer. Run the Bybit order script as a dry-run only using
-  my requested side, margin, leverage, and TP/SL parameters, calculate
-  reward/risk from the printed plan, and provide signal/risk commentary only.
-  Do not use --execute.
-
-Use this when you want Codex to open the trade:
-
-  Use the generating-trading-signals skill for BTCUSDT. Query Bybit market data
-  with the local analyzer and treat it as commentary only. Open the trade using
-  my requested side, margin, leverage, and TP/SL parameters. Include --execute.
+For a Buy:  stop_loss < entry_reference < take_profit
+For a Sell: take_profit < entry_reference < stop_loss
 
 
 Logging Template
 ----------------
 
-Log every signal, dry-run, and executed demo trade:
+Each signal record contains:
 
-  date_time:
-  symbol:
-  analyzer_recommendation:
-  confidence:
-  15m_score:
-  60m_score:
-  240m_score:
-  side_considered:
-  entry_reference:
-  stop_loss:
-  take_profit:
-  reward_risk:
-  margin_usdt:
-  leverage:
-  qty:
-  user_action: dry-run / executed
-  signal_comment:
-  reason:
-  result_r_multiple:
-
-Do not increase size based on one good result. Review at least 30 logged demo
-trades before changing risk.
+  date_time
+  symbol
+  analyzer_recommendation
+  confidence
+  15m_score / 60m_score / 240m_score
+  side_considered
+  entry_reference
+  stop_loss
+  take_profit
+  reward_risk
+  margin_usdt
+  leverage
+  qty
+  signal_comment
+  reason
+  result_r_multiple
 
 
 Safety Notes
@@ -338,13 +211,10 @@ Safety Notes
 
 This is not financial advice.
 
-Use demo mode until the process is proven in your own logs.
+These scripts only read public market data. They do not place, open, modify, or
+cancel any orders or positions.
 
-Never share API secrets in prompts or commit them to git.
+The signal can be wrong. Treat it as commentary. Any trade you make from it is
+your own manual decision.
 
-The signal can be wrong. Treat it as commentary, not an approval or rejection
-gate.
-
-The user's explicit trade instruction controls side, margin, leverage, and TP/SL
-parameters. If the user asks to open, place, enter, execute, or submit a trade,
-the order command should include --execute.
+Never share SMTP or API secrets in prompts or commit them to git.

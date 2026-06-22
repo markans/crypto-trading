@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Open a Bybit linear perpetual position.
+Build a suggested trade plan (entry / stop-loss / take-profit) for a Bybit
+linear perpetual symbol.
 
-Dry-run is the default. Pass --execute to send signed Bybit requests.
+This module is read-only: it only reads public market data and computes a
+suggested plan for a human to act on. It never sends signed requests and never
+places orders.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import hmac
 import json
 import os
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,7 +21,6 @@ from decimal import Decimal, ROUND_DOWN
 
 
 DEFAULT_BASE_URL = "https://api-demo.bybit.com"
-RECV_WINDOW = "5000"
 HTTP_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
@@ -70,51 +69,6 @@ def public_get(base_url: str, path: str, params: dict[str, str]) -> dict:
     request = urllib.request.Request(f"{base_url}{path}?{query}", headers=HTTP_HEADERS, method="GET")
     with urllib.request.urlopen(request, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
-
-
-def signed_request(
-    base_url: str,
-    method: str,
-    path: str,
-    api_key: str,
-    api_secret: str,
-    payload: dict[str, str] | None = None,
-) -> dict:
-    payload = payload or {}
-    timestamp = str(int(time.time() * 1000))
-
-    if method == "GET":
-        body_or_query = urllib.parse.urlencode(payload)
-        url = f"{base_url}{path}?{body_or_query}" if body_or_query else f"{base_url}{path}"
-        body_bytes = None
-    else:
-        body_or_query = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        url = f"{base_url}{path}"
-        body_bytes = body_or_query.encode("utf-8")
-
-    sign_payload = f"{timestamp}{api_key}{RECV_WINDOW}{body_or_query}"
-    signature = hmac.new(
-        api_secret.encode("utf-8"),
-        sign_payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    headers = {
-        **HTTP_HEADERS,
-        "Content-Type": "application/json",
-        "X-BAPI-API-KEY": api_key,
-        "X-BAPI-TIMESTAMP": timestamp,
-        "X-BAPI-RECV-WINDOW": RECV_WINDOW,
-        "X-BAPI-SIGN": signature,
-    }
-
-    request = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} from {path}: {body}") from exc
 
 
 def require_ok(response: dict, action: str) -> None:
@@ -206,7 +160,7 @@ def structure_targets(
             raise RuntimeError(
                 f"Invalid short structure: entry={entry}, stop_loss={stop_loss}, take_profit={take_profit}"
             )
-        return stop_loss, take_profit, f"{interval}m swing high SL / swing low TP"
+        return stop_loss, take_profit, f"{interval} swing high SL / swing low TP"
 
     stop_candidates = [price for price in reversed(pivot_lows) if price < entry]
     target_candidates = [price for price in reversed(pivot_highs) if price > entry]
@@ -218,7 +172,7 @@ def structure_targets(
         raise RuntimeError(
             f"Invalid long structure: entry={entry}, stop_loss={stop_loss}, take_profit={take_profit}"
         )
-    return stop_loss, take_profit, f"{interval}m swing low SL / swing high TP"
+    return stop_loss, take_profit, f"{interval} swing low SL / swing high TP"
 
 
 def build_plan(args: argparse.Namespace, base_url: str) -> dict[str, Decimal | str]:
@@ -270,8 +224,9 @@ def build_plan(args: argparse.Namespace, base_url: str) -> dict[str, Decimal | s
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Open a Bybit linear perpetual position.")
-    parser.add_argument("--execute", action="store_true", help="Send the order to the configured Bybit endpoint.")
+    parser = argparse.ArgumentParser(
+        description="Print a suggested Bybit linear perpetual trade plan (signal only, no orders)."
+    )
     parser.add_argument("--symbol", default="BTC/USDT")
     parser.add_argument("--side", choices=["Buy", "Sell"], default="Buy")
     parser.add_argument("--margin", type=Decimal, default=Decimal("100"))
@@ -281,87 +236,18 @@ def main() -> int:
     parser.add_argument("--tp-sl-mode", choices=["pnl", "structure"], default="pnl")
     parser.add_argument("--structure-interval", default="15")
     parser.add_argument("--entry-price", help="Optional reference price; otherwise fetched from Bybit.")
-    parser.add_argument("--skip-margin-mode", action="store_true")
-    parser.add_argument("--skip-leverage", action="store_true")
     args = parser.parse_args()
 
     load_dotenv()
 
     base_url = os.getenv("BYBIT_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
-    api_key = os.getenv("BYBIT_DEMO_API_KEY") or os.getenv("BYBIT_API_KEY", "")
-    api_secret = os.getenv("BYBIT_DEMO_API_SECRET") or os.getenv("BYBIT_API_SECRET", "")
 
     plan = build_plan(args, base_url)
-    order_payload = {
-        "category": "linear",
-        "symbol": str(plan["symbol"]),
-        "side": str(plan["side"]),
-        "orderType": "Market",
-        "qty": decimal_str(plan["qty"]),
-        "positionIdx": 0,
-        "takeProfit": decimal_str(plan["take_profit"]),
-        "stopLoss": decimal_str(plan["stop_loss"]),
-        "tpTriggerBy": "MarkPrice",
-        "slTriggerBy": "MarkPrice",
-    }
 
-    print(f"Bybit {environment_label(base_url)} {plan['symbol']} plan")
+    print(f"Bybit {environment_label(base_url)} {plan['symbol']} suggested plan")
     for key, value in plan.items():
         print(f"{key}: {value}")
-    print("order_payload:")
-    print(json.dumps(order_payload, indent=2))
-
-    if not args.execute:
-        print(f"\nDry run only. Add --execute to place this on Bybit {environment_label(base_url)}.")
-        return 0
-
-    if not api_key or not api_secret:
-        raise RuntimeError(
-            "Set BYBIT_DEMO_API_KEY/BYBIT_DEMO_API_SECRET or "
-            "BYBIT_API_KEY/BYBIT_API_SECRET in .env before --execute."
-        )
-
-    if not args.skip_margin_mode:
-        margin_response = signed_request(
-            base_url,
-            "POST",
-            "/v5/account/set-margin-mode",
-            api_key,
-            api_secret,
-            {"setMarginMode": "REGULAR_MARGIN"},
-        )
-        require_ok(margin_response, "Set cross margin mode")
-        print("Set cross margin mode: OK")
-
-    if not args.skip_leverage:
-        leverage_value = decimal_str(plan["leverage"])
-        leverage_response = signed_request(
-            base_url,
-            "POST",
-            "/v5/position/set-leverage",
-            api_key,
-            api_secret,
-            {
-                "category": "linear",
-                "symbol": str(plan["symbol"]),
-                "buyLeverage": leverage_value,
-                "sellLeverage": leverage_value,
-            },
-        )
-        require_ok(leverage_response, "Set leverage")
-        print("Set leverage: OK")
-
-    order_response = signed_request(
-        base_url,
-        "POST",
-        "/v5/order/create",
-        api_key,
-        api_secret,
-        order_payload,
-    )
-    require_ok(order_response, "Create market order")
-    print("Create market order: OK")
-    print(json.dumps(order_response, indent=2))
+    print("\nSignal only. This script never places orders.")
     return 0
 
 

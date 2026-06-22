@@ -1,6 +1,6 @@
 ## Objective
 
-First of all, choose an agent to spawn to manage the task, use this agent to check `BYBIT-SIGNAL-WORKFLOW.txt` to generate signal commentary. The signal is informational only; it must not approve, reject, or override the user's explicit trade instruction. If the user asks to open, place, enter, execute, or submit a trade, the order command should include `--execute`.
+First of all, choose an agent to spawn to manage the task, use this agent to check `BYBIT-SIGNAL-WORKFLOW.txt` to generate signal commentary. This repo is signal-only: it reads public market data and reports a recommendation plus a suggested plan. It must never place, open, or submit orders. The signal is informational commentary only; acting on it is the user's own manual decision made outside these scripts.
 
 Keep skill selection and custom-agent routing accurate for the entire task, including long conversations where the original match can otherwise drift.
 
