@@ -3,14 +3,10 @@ name: Bybit Daily Swing Signal
 on:
   workflow_dispatch:
     inputs:
-      top_marketcap:
-        description: "Number of top market-cap symbols to scan."
+      symbols:
+        description: "Comma-separated pairs to scan."
         required: true
-        default: "20"
-      symbol:
-        description: "Optional single pair to scan instead of the top list. Leave blank to scan the top list."
-        required: false
-        default: ""
+        default: "BTCUSDT,ETHUSDT,DOGEUSDT,XRPUSDT,SOLUSDT,MNTUSDT,SUIUSDT,HYPEUSDT"
       margin:
         description: "Margin in USDT (used only to size the suggested plan)."
         required: true
@@ -38,8 +34,7 @@ jobs:
     env:
       BYBIT_BASE_URL: ${{ secrets.BYBIT_BASE_URL }}
       BYBIT_MARKET_BASE_URL: ${{ secrets.BYBIT_MARKET_BASE_URL }}
-      AUTO_TOP: "20"
-      AUTO_SYMBOL: ""
+      AUTO_SYMBOLS: "BTCUSDT,ETHUSDT,DOGEUSDT,XRPUSDT,SOLUSDT,MNTUSDT,SUIUSDT,HYPEUSDT"
       AUTO_MARGIN: "25"
       AUTO_LEVERAGE: "5"
     steps:
@@ -54,37 +49,24 @@ jobs:
       - name: Apply manual inputs
         if: github.event_name == 'workflow_dispatch'
         env:
-          INPUT_TOP: ${{ inputs.top_marketcap }}
-          INPUT_SYMBOL: ${{ inputs.symbol }}
+          INPUT_SYMBOLS: ${{ inputs.symbols }}
           INPUT_MARGIN: ${{ inputs.margin }}
           INPUT_LEVERAGE: ${{ inputs.leverage }}
         run: |
-          printf 'AUTO_TOP=%s\n' "$INPUT_TOP" >> "$GITHUB_ENV"
-          printf 'AUTO_SYMBOL=%s\n' "$INPUT_SYMBOL" >> "$GITHUB_ENV"
+          printf 'AUTO_SYMBOLS=%s\n' "$INPUT_SYMBOLS" >> "$GITHUB_ENV"
           printf 'AUTO_MARGIN=%s\n' "$INPUT_MARGIN" >> "$GITHUB_ENV"
           printf 'AUTO_LEVERAGE=%s\n' "$INPUT_LEVERAGE" >> "$GITHUB_ENV"
 
       - name: Run swing-signal generator
         run: |
-          if [ -n "${AUTO_SYMBOL}" ]; then
-            python3 scripts/bybit_signal.py \
-              --symbol "$AUTO_SYMBOL" \
-              --margin "$AUTO_MARGIN" \
-              --leverage "$AUTO_LEVERAGE" \
-              --tp-sl-mode structure \
-              --structure-interval D \
-              --no-email \
-              --summary-file strong-signals.md
-          else
-            python3 scripts/bybit_signal.py \
-              --top-marketcap "$AUTO_TOP" \
-              --margin "$AUTO_MARGIN" \
-              --leverage "$AUTO_LEVERAGE" \
-              --tp-sl-mode structure \
-              --structure-interval D \
-              --no-email \
-              --summary-file strong-signals.md
-          fi
+          python3 scripts/bybit_signal.py \
+            --symbols "$AUTO_SYMBOLS" \
+            --margin "$AUTO_MARGIN" \
+            --leverage "$AUTO_LEVERAGE" \
+            --tp-sl-mode structure \
+            --structure-interval D \
+            --no-email \
+            --summary-file strong-signals.md
 
       - name: Open issue for strong signals
         if: hashFiles('strong-signals.md') != ''
