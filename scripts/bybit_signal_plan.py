@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,8 @@ HTTP_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
 }
+# Transient statuses worth retrying (see bybit_analyze_symbol for rationale).
+RETRY_STATUS = {403, 429, 500, 502, 503, 504}
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -66,9 +69,27 @@ def environment_label(base_url: str) -> str:
 
 def public_get(base_url: str, path: str, params: dict[str, str]) -> dict:
     query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(f"{base_url}{path}?{query}", headers=HTTP_HEADERS, method="GET")
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
+    url = f"{base_url}{path}?{query}"
+    delay = 1.0
+    attempts = 4
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, headers=HTTP_HEADERS, method="GET")
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in RETRY_STATUS and attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+        except urllib.error.URLError:
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+    raise RuntimeError(f"Exhausted retries for {url}")
 
 
 def require_ok(response: dict, action: str) -> None:

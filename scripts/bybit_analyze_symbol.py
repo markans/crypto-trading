@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from decimal import Decimal
@@ -18,6 +20,33 @@ HTTP_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (compatible; trader-dev-bot/1.0)",
 }
+# Transient statuses worth retrying. Bybit/Cloudflare intermittently returns 403
+# to datacenter IPs (e.g. GitHub runners) under burst load; 429/5xx are rate or
+# server errors. 400/451 are permanent (bad symbol / geo-block) and not retried.
+RETRY_STATUS = {403, 429, 500, 502, 503, 504}
+
+
+def get_json(url: str, headers: dict | None = None, timeout: int = 15, attempts: int = 4) -> dict | list:
+    """GET JSON with exponential backoff on transient HTTP/network errors."""
+    delay = 1.0
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, headers=headers or HTTP_HEADERS, method="GET")
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in RETRY_STATUS and attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+        except urllib.error.URLError:
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+    raise RuntimeError(f"Exhausted retries for {url}")
 
 # Swing-trading timeframe set: 4h / daily / weekly trend alignment.
 # Bybit kline intervals; "D" and "W" are daily and weekly candles.
@@ -33,10 +62,8 @@ def normalize_symbol(symbol: str) -> str:
 
 def public_get(base_url: str, path: str, params: dict[str, str]) -> dict:
     query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(f"{base_url}{path}?{query}", headers=HTTP_HEADERS, method="GET")
-    with urllib.request.urlopen(request, timeout=15) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    if data.get("retCode") != 0:
+    data = get_json(f"{base_url}{path}?{query}")
+    if not isinstance(data, dict) or data.get("retCode") != 0:
         raise RuntimeError(json.dumps(data, indent=2))
     return data
 

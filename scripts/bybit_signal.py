@@ -90,13 +90,7 @@ def resolve_market_base_url(trade_base_url: str) -> str:
 
 def public_json(base_url: str, path: str, params: dict[str, str]) -> dict | list:
     query = urllib.parse.urlencode(params)
-    request = urllib.request.Request(
-        f"{base_url}{path}?{query}",
-        headers=analyzer.HTTP_HEADERS,
-        method="GET",
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
+    return analyzer.get_json(f"{base_url}{path}?{query}")
 
 
 def fetch_top_marketcap_candidates(count: int) -> list[str]:
