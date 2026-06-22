@@ -39,8 +39,10 @@ def email_config() -> dict[str, object] | None:
     if not host or not recipients:
         return None
 
-    port = int(os.getenv("SMTP_PORT", "587"))
-    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+    # Env vars injected from unset GitHub secrets arrive as empty strings, which
+    # would otherwise override these defaults. Fall back when blank.
+    port = int((os.getenv("SMTP_PORT", "").strip() or "587"))
+    use_tls = (os.getenv("SMTP_USE_TLS", "").strip().lower() or "true") in {"1", "true", "yes", "on"}
     sender = os.getenv("EMAIL_FROM", "").strip() or username
 
     if not sender:
